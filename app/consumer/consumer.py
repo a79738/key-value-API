@@ -19,11 +19,11 @@ redis_client = redis.Redis(
 
 # Conexão PostgreSQL
 pg_conn = psycopg2.connect(
-    host='haproxy',
-    port=26256,
-    user='root',
-    password='',
-    database='appdb'
+    host=os.getenv('POSTGRES_HOST', 'haproxy'),
+    port=int(os.getenv('POSTGRES_PORT', 26256)),
+    user=os.getenv('POSTGRES_USER', 'root'),
+    password=os.getenv('POSTGRES_PASSWORD', ''),
+    database=os.getenv('POSTGRES_DB', 'appdb')
 )
 
 # Verificando conexão com o banco de dados
@@ -43,21 +43,22 @@ with pg_conn.cursor() as cur:
 
 # Conexão RabbitMQ
 def connect_to_rabbitmq():
+    rabbitmq_host = os.getenv('RABBITMQ_HOST', 'rabbitmq')
     for attempt in range(1, 11):
         try:
             connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host='rabbitmq')
+                pika.ConnectionParameters(host=rabbitmq_host)
             )
             channel = connection.channel()
             channel.queue_declare(queue='add_key', durable=True)
             channel.queue_declare(queue='del_key', durable=True)
-            logger.info("✅ Conectado ao RabbitMQ")
+            logger.info(f"✅ Conectado ao RabbitMQ: {rabbitmq_host}")
             return connection, channel
         except pika.exceptions.AMQPConnectionError:
-            logger.warning(f"RabbitMQ não está pronto. Tentativa {attempt}/10. Tentando novamente em 2 segundos...")
+            logger.warning(f"RabbitMQ ({rabbitmq_host}) não está pronto. Tentativa {attempt}/10. Tentando novamente em 2 segundos...")
             time.sleep(2)
     
-    raise Exception("Não foi possível conectar ao RabbitMQ após várias tentativas")
+    raise Exception(f"Não foi possível conectar ao RabbitMQ ({rabbitmq_host}) após várias tentativas")
 
 # Conecta ao RabbitMQ
 rabbitmq_conn, rabbitmq_channel = connect_to_rabbitmq()

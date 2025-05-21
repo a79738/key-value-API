@@ -47,17 +47,17 @@ async def startup_event():
     
     # Conectar ao PostgreSQL
     pg_conn = psycopg2.connect(
-        host='haproxy',
-        port=26256,
-        user='root',
-        password='',
-        database='appdb'
+        host=os.getenv('POSTGRES_HOST', 'haproxy'),
+        port=int(os.getenv('POSTGRES_PORT', 26256)),
+        user=os.getenv('POSTGRES_USER', 'root'),
+        password=os.getenv('POSTGRES_PASSWORD', ''),
+        database=os.getenv('POSTGRES_DB', 'appdb')
     )
     logger.info("✅ Conectado ao PostgreSQL")
     
     # Conectar ao RabbitMQ
     connection = pika.BlockingConnection(
-        pika.ConnectionParameters(host='rabbitmq')
+        pika.ConnectionParameters(host=os.getenv('RABBITMQ_HOST', 'rabbitmq'))
     )
     rabbitmq_channel = connection.channel()
     rabbitmq_channel.queue_declare(queue='add_key', durable=True)

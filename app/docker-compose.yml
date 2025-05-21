@@ -1,0 +1,133 @@
+services:
+  api:
+    build: ./api
+    ports:
+      - "3000:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      haproxy:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  consumer:
+    build: ./consumer
+    command: python consumer.py
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      haproxy:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  crdb1:
+    image: cockroachdb/cockroach:v23.1.11
+    command: start --insecure --join=crdb1,crdb2,crdb3
+    hostname: crdb1
+    ports:
+      - "26257:26257"
+      - "8081:8080"
+    volumes:
+      - crdb1-data:/cockroach/cockroach-data
+
+  crdb2:
+    image: cockroachdb/cockroach:v23.1.11
+    command: start --insecure --join=crdb1,crdb2,crdb3
+    hostname: crdb2
+    ports:
+      - "26258:26257"
+      - "8082:8080"
+    volumes:
+      - crdb2-data:/cockroach/cockroach-data
+
+  crdb3:
+    image: cockroachdb/cockroach:v23.1.11
+    command: start --insecure --join=crdb1,crdb2,crdb3
+    hostname: crdb3
+    ports:
+      - "26259:26257"
+      - "8083:8080"
+    volumes:
+      - crdb3-data:/cockroach/cockroach-data
+
+  crdb-init:
+    image: cockroachdb/cockroach:v23.1.11
+    depends_on:
+      - crdb1
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Assuming crdb1 is ready...';
+        echo 'Initializing cluster...';
+        cockroach init --insecure --host=crdb1 || echo 'Already initialized';
+        cockroach sql --insecure --host=crdb1 -e 'CREATE DATABASE appdb;'
+        cockroach sql --insecure --host=crdb1 --database=appdb -e 'CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY,value TEXT,last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW());'
+        echo 'Done.';
+      "
+
+  haproxy:
+    image: haproxy:2.9
+    ports:
+      - "26256:26256"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      crdb-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: golang-rabbitmq-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+volumes:
+  crdb1-data:
+  crdb2-data:
+  crdb3-data:

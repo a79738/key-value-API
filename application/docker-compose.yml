@@ -1,7 +1,8 @@
+version: '3.8'
+
 services:
-  # Nginx Load Balancer
-  load_balancer:
-    image: nginx:latest
+  nginx:
+    image: nginx:alpine
     ports:
       - "8000:80"
     volumes:
@@ -10,25 +11,18 @@ services:
       - api1
       - api2
       - api3
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
-  # API Instances
-  api1: &api_template
+  api1:
     build: ./api
-    container_name: api1
+    hostname: api1
     expose:
       - "3000"
     depends_on:
       redis:
-        condition: service_healthy
+        condition: service_started
       haproxy:
-        condition: service_healthy
-      rabbitmq1:
+        condition: service_started
+      rabbitmq:
         condition: service_healthy
     environment:
       - REDIS_HOST=redis
@@ -38,52 +32,61 @@ services:
       - POSTGRES_USER=root
       - POSTGRES_PASSWORD=""
       - POSTGRES_DB=appdb
-      - RABBITMQ_HOST=rabbitmq1
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
 
   api2:
-    <<: *api_template
-    container_name: api2
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - POSTGRES_HOST=haproxy
-      - POSTGRES_PORT=26256
-      - POSTGRES_USER=root
-      - POSTGRES_PASSWORD=""
-      - POSTGRES_DB=appdb
-      - RABBITMQ_HOST=rabbitmq1
-
-  api3:
-    <<: *api_template
-    container_name: api3
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - POSTGRES_HOST=haproxy
-      - POSTGRES_PORT=26256
-      - POSTGRES_USER=root
-      - POSTGRES_PASSWORD=""
-      - POSTGRES_DB=appdb
-      - RABBITMQ_HOST=rabbitmq2
-
-  # Consumer Instances
-  consumer1: &consumer_template
-    build: ./consumer
-    container_name: consumer1
-    command: python consumer.py
+    build: ./api
+    hostname: api2
+    expose:
+      - "3000"
     depends_on:
       redis:
+        condition: service_started
+      haproxy:
+        condition: service_started
+      rabbitmq:
         condition: service_healthy
-      rabbitmq1:
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+
+  api3:
+    build: ./api
+    hostname: api3
+    expose:
+      - "3000"
+    depends_on:
+      redis:
+        condition: service_started
+      haproxy:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+
+  consumer1:
+    build: ./consumer
+    hostname: consumer1
+    command: python consumer.py
+    restart: on-failure
+    depends_on:
+      redis:
+        condition: service_started
+      rabbitmq:
         condition: service_healthy
       haproxy:
-        condition: service_healthy
+        condition: service_started
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -92,11 +95,19 @@ services:
       - POSTGRES_USER=root
       - POSTGRES_PASSWORD=""
       - POSTGRES_DB=appdb
-      - RABBITMQ_HOST=rabbitmq1
 
   consumer2:
-    <<: *consumer_template
-    container_name: consumer2
+    build: ./consumer
+    hostname: consumer2
+    command: python consumer.py
+    restart: on-failure
+    depends_on:
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      haproxy:
+        condition: service_started
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -105,11 +116,19 @@ services:
       - POSTGRES_USER=root
       - POSTGRES_PASSWORD=""
       - POSTGRES_DB=appdb
-      - RABBITMQ_HOST=rabbitmq1
 
   consumer3:
-    <<: *consumer_template
-    container_name: consumer3
+    build: ./consumer
+    hostname: consumer3
+    command: python consumer.py
+    restart: on-failure
+    depends_on:
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      haproxy:
+        condition: service_started
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -118,27 +137,19 @@ services:
       - POSTGRES_USER=root
       - POSTGRES_PASSWORD=""
       - POSTGRES_DB=appdb
-      - RABBITMQ_HOST=rabbitmq2
 
-  # Redis
   redis:
     image: redis:7
     ports:
       - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
-  # CockroachDB Cluster
   crdb1:
     image: cockroachdb/cockroach:v23.1.11
     command: start --insecure --join=crdb1,crdb2,crdb3
     hostname: crdb1
     ports:
       - "26257:26257"
-      - "8081:8080"
+      - "18080:8080"
     volumes:
       - crdb1-data:/cockroach/cockroach-data
 
@@ -148,7 +159,7 @@ services:
     hostname: crdb2
     ports:
       - "26258:26257"
-      - "8082:8080"
+      - "18081:8080"
     volumes:
       - crdb2-data:/cockroach/cockroach-data
 
@@ -158,7 +169,7 @@ services:
     hostname: crdb3
     ports:
       - "26259:26257"
-      - "8083:8080"
+      - "18082:8080"
     volumes:
       - crdb3-data:/cockroach/cockroach-data
 
@@ -176,7 +187,6 @@ services:
         echo 'Done.';
       "
 
-  # HAProxy - Load balancer para o CockroachDB
   haproxy:
     image: haproxy:2.9
     ports:
@@ -184,35 +194,20 @@ services:
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     depends_on:
-      crdb-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - crdb-init  # Ensure init happens first
 
-  # RabbitMQ Instances
-  rabbitmq1: &rabbitmq_template
+  rabbitmq:
     image: rabbitmq:3-management
-    container_name: rabbitmq1
-    hostname: rabbitmq1
+    container_name: golang-rabbitmq-rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
     healthcheck:
-      test: rabbitmq-diagnostics -q ping
-      interval: 30s
-      timeout: 30s
-      retries: 3
-
-  rabbitmq2:
-    <<: *rabbitmq_template
-    container_name: rabbitmq2
-    hostname: rabbitmq2
-    ports:
-      - "5673:5672"
-      - "15673:15672"
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 volumes:
   crdb1-data:
